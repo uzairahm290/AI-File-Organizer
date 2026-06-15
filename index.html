@@ -1,0 +1,804 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI File Organizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: '#0f1117',
+            card:    '#1a1d27',
+            border:  '#2a2d3e',
+            accent:  '#7c6ff7',
+            accentHover: '#6558e8',
+            success: '#22c55e',
+            danger:  '#ef4444',
+            muted:   '#6b7280',
+          },
+          fontFamily: {
+            sans: ['"Inter"', 'system-ui', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          },
+        },
+      },
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    body { background-color: #0f1117; }
+
+    .skeleton {
+      background: linear-gradient(90deg, #1a1d27 25%, #23263a 50%, #1a1d27 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      border-radius: 6px;
+    }
+    @keyframes shimmer {
+      0%   { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    .spinner {
+      border: 3px solid #2a2d3e;
+      border-top-color: #7c6ff7;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .fade-in {
+      animation: fadeIn 0.35s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #1a1d27; }
+    ::-webkit-scrollbar-thumb { background: #2a2d3e; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #7c6ff7; }
+
+    #confirmModal {
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+    #confirmModal .modal-box {
+      animation: modalIn 0.2s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: scale(0.92) translateY(12px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+
+    .rename-input {
+      background: #0f1117;
+      border: 1px solid #2a2d3e;
+      border-radius: 6px;
+      color: #e5e7eb;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      padding: 4px 8px;
+      width: 100%;
+      transition: border-color 0.15s;
+    }
+    .rename-input:focus {
+      outline: none;
+      border-color: #7c6ff7;
+    }
+    .rename-input.changed {
+      border-color: #7c6ff7;
+      background: #16182a;
+    }
+
+    input[type="checkbox"] {
+      accent-color: #7c6ff7;
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+
+<body class="font-sans text-gray-100 min-h-screen flex flex-col">
+
+  <!-- ─── CONFIRMATION MODAL ─────────────────────────────────────────────── -->
+  <div id="confirmModal" class="hidden fixed inset-0 z-50 bg-black/70 flex items-center justify-center px-4">
+    <div class="modal-box bg-card border border-border rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-5">
+
+      <!-- Icon + title -->
+      <div class="flex items-start gap-4">
+        <div class="w-10 h-10 rounded-full bg-amber-500/15 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+        </div>
+        <div>
+          <h3 class="text-sm font-semibold text-white">Confirm Organization</h3>
+          <p class="text-xs text-muted mt-1">This will physically move files into new subfolders. This action cannot be automatically undone.</p>
+        </div>
+      </div>
+
+      <!-- Summary box -->
+      <div class="bg-surface border border-border rounded-xl px-4 py-3 space-y-1.5 text-xs">
+        <div class="flex justify-between">
+          <span class="text-muted">Folder</span>
+          <span id="modalPath" class="font-mono text-gray-300 truncate max-w-[220px] text-right"></span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-muted">Files to organize</span>
+          <span id="modalFileCount" class="text-gray-300 font-semibold"></span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-muted">Action</span>
+          <span class="text-amber-400">Move into AI-created subfolders</span>
+        </div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="flex gap-3 pt-1">
+        <button
+          onclick="closeModal()"
+          class="flex-1 bg-surface border border-border hover:border-gray-500 text-gray-300 text-sm font-semibold rounded-xl px-4 py-2.5 transition"
+        >
+          Cancel
+        </button>
+        <button
+          onclick="confirmOrganize()"
+          class="flex-1 bg-accent hover:bg-accentHover text-white text-sm font-semibold rounded-xl px-4 py-2.5 transition"
+        >
+          Yes, Organize
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ─── HEADER ─────────────────────────────────────────────────────────── -->
+  <header class="border-b border-border px-6 py-4 flex items-center gap-3">
+    <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center shadow-lg">
+      <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 9.776c.112-.017.227-.026.344-.026h15.812c.117 0 .232.009.344.026m-16.5 0a2.25 2.25 0 00-1.883 2.542l.857 6a2.25 2.25 0 002.227 1.932H19.05a2.25 2.25 0 002.227-1.932l.857-6a2.25 2.25 0 00-1.883-2.542m-16.5 0V6A2.25 2.25 0 016 3.75h3.879a1.5 1.5 0 011.06.44l2.122 2.12a1.5 1.5 0 001.06.44H18A2.25 2.25 0 0120.25 9v.776" />
+      </svg>
+    </div>
+    <div>
+      <h1 class="text-base font-semibold text-white leading-tight">AI File Organizer</h1>
+      <p class="text-xs text-muted">Powered by Gemini · Local & Private</p>
+    </div>
+    <div class="ml-auto">
+      <span id="serverStatus" class="inline-flex items-center gap-1.5 text-xs text-muted bg-card border border-border rounded-full px-3 py-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-muted"></span> Connecting…
+      </span>
+    </div>
+  </header>
+
+  <!-- ─── MAIN ────────────────────────────────────────────────────────────── -->
+  <main class="flex-1 max-w-3xl w-full mx-auto px-4 py-10 space-y-6">
+
+    <!-- Error Banner -->
+    <div id="errorBanner" class="hidden fade-in bg-red-950 border border-danger text-red-300 rounded-xl px-5 py-4 text-sm flex items-start gap-3">
+      <svg class="w-5 h-5 mt-0.5 shrink-0 text-danger" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      </svg>
+      <span id="errorMessage"></span>
+    </div>
+
+    <!-- ── STEP 1: Path Input ────────────────────────────────────────────── -->
+    <section class="bg-card border border-border rounded-2xl p-6 space-y-4">
+      <div class="flex items-center gap-2 mb-1">
+        <span class="text-xs font-semibold bg-accent text-white rounded-full w-5 h-5 flex items-center justify-center">1</span>
+        <h2 class="text-sm font-semibold text-white">Select a Folder</h2>
+      </div>
+      <p class="text-xs text-muted">Enter the absolute path to the folder you want to work on. Hidden system files and subdirectories are automatically ignored.</p>
+
+      <div class="flex gap-3">
+        <div class="flex-1 relative">
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+            </svg>
+          </span>
+          <input
+            id="pathInput"
+            type="text"
+            placeholder="/Users/you/Downloads"
+            class="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-2.5 text-sm font-mono text-gray-100 placeholder-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition"
+          />
+        </div>
+        <button
+          id="scanBtn"
+          onclick="handleScan()"
+          class="shrink-0 bg-accent hover:bg-accentHover text-white text-sm font-semibold rounded-xl px-5 py-2.5 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 15.803 7.5 7.5 0 0015.803 15.803z" />
+          </svg>
+          Scan
+        </button>
+      </div>
+
+      <!-- Scan loading skeleton -->
+      <div id="scanSkeleton" class="hidden space-y-2 pt-2">
+        <div class="skeleton h-4 w-1/3"></div>
+        <div class="skeleton h-3 w-full"></div>
+        <div class="skeleton h-3 w-5/6"></div>
+        <div class="skeleton h-3 w-4/6"></div>
+        <div class="skeleton h-3 w-full"></div>
+        <div class="skeleton h-3 w-3/4"></div>
+      </div>
+    </section>
+
+    <!-- ── STEP 2: Scan Preview ──────────────────────────────────────────── -->
+    <section id="previewSection" class="hidden fade-in bg-card border border-border rounded-2xl p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold bg-accent text-white rounded-full w-5 h-5 flex items-center justify-center">2</span>
+          <h2 class="text-sm font-semibold text-white">Scan Preview</h2>
+        </div>
+        <span id="fileCount" class="text-xs text-muted bg-surface border border-border rounded-full px-2.5 py-0.5"></span>
+      </div>
+
+      <p class="text-xs text-muted">Choose an action below. Gemini reads filenames only for Organize; it reads actual file content for Smart Rename.</p>
+
+      <div id="fileList" class="max-h-56 overflow-y-auto space-y-1 pr-1"></div>
+
+      <!-- Action buttons -->
+      <div class="pt-2 border-t border-border space-y-3">
+
+        <!-- Organize -->
+        <button
+          id="organizeBtn"
+          onclick="handleOrganize()"
+          class="w-full bg-accent hover:bg-accentHover text-white text-sm font-semibold rounded-xl px-5 py-3 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+          </svg>
+          <span id="organizeLabel">Organize with AI — sort into folders</span>
+        </button>
+
+        <!-- Smart Rename -->
+        <button
+          id="renameBtn"
+          onclick="handleRename()"
+          class="w-full bg-surface border border-border hover:border-accent text-gray-200 text-sm font-semibold rounded-xl px-5 py-3 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-4 h-4 text-accent" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+          </svg>
+          <span id="renameLabel">Smart Rename with AI — read content, rename files</span>
+        </button>
+
+        <!-- Loading states (shared) -->
+        <div id="organizeLoading" class="hidden mt-1 space-y-3">
+          <div class="flex items-center gap-3 text-sm text-muted">
+            <div class="spinner"></div>
+            <span>Gemini is categorizing your files…</span>
+          </div>
+          <div class="space-y-2">
+            <div class="skeleton h-3 w-2/3"></div>
+            <div class="skeleton h-3 w-1/2"></div>
+            <div class="skeleton h-3 w-3/4"></div>
+          </div>
+        </div>
+
+        <div id="renameLoading" class="hidden mt-1 space-y-3">
+          <div class="flex items-center gap-3 text-sm text-muted">
+            <div class="spinner"></div>
+            <span id="renameLoadingLabel">Reading file contents and asking Gemini…</span>
+          </div>
+          <div class="space-y-2">
+            <div class="skeleton h-3 w-3/4"></div>
+            <div class="skeleton h-3 w-1/2"></div>
+            <div class="skeleton h-3 w-2/3"></div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── STEP 3a: Organize Results ─────────────────────────────────────── -->
+    <section id="organizeResultsSection" class="hidden fade-in space-y-4">
+      <div class="bg-green-950 border border-success rounded-2xl p-5 flex items-start gap-4">
+        <div class="w-9 h-9 rounded-full bg-success/20 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-semibold text-white">Organization Complete</p>
+          <p id="organizeSummary" class="text-xs text-green-300 mt-0.5"></p>
+        </div>
+        <button onclick="handleReset()" class="ml-auto text-xs text-muted hover:text-white transition underline underline-offset-2 shrink-0">Start Over</button>
+      </div>
+      <div id="categoriesList" class="space-y-3"></div>
+    </section>
+
+    <!-- ── STEP 3b: Rename Preview Table ─────────────────────────────────── -->
+    <section id="renamePreviewSection" class="hidden fade-in bg-card border border-border rounded-2xl p-6 space-y-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold bg-accent text-white rounded-full w-5 h-5 flex items-center justify-center">3</span>
+          <h2 class="text-sm font-semibold text-white">Rename Preview</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <button onclick="toggleAll(true)" class="text-xs text-accent hover:text-white transition">Select All</button>
+          <span class="text-border">|</span>
+          <button onclick="toggleAll(false)" class="text-xs text-muted hover:text-white transition">Deselect All</button>
+          <span id="selectedCount" class="text-xs text-muted bg-surface border border-border rounded-full px-2.5 py-0.5 ml-1"></span>
+        </div>
+      </div>
+
+      <p class="text-xs text-muted">Edit any suggested name before applying. Uncheck files you want to skip. The original extension is always preserved.</p>
+
+      <!-- Column headers -->
+      <div class="grid grid-cols-[20px_1fr_20px_1fr] gap-x-3 gap-y-0 px-1 pb-1 border-b border-border">
+        <div></div>
+        <div class="text-xs font-medium text-muted">Original</div>
+        <div></div>
+        <div class="text-xs font-medium text-muted">Suggested (editable)</div>
+      </div>
+
+      <div id="renameTable" class="space-y-2 max-h-96 overflow-y-auto pr-1"></div>
+
+      <div class="pt-3 border-t border-border">
+        <button
+          id="applyRenameBtn"
+          onclick="handleApplyRenames()"
+          class="w-full bg-accent hover:bg-accentHover text-white text-sm font-semibold rounded-xl px-5 py-3 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+          <span id="applyRenameLabel">Apply Selected Renames</span>
+        </button>
+
+        <div id="applyRenameLoading" class="hidden mt-3 flex items-center gap-3 text-sm text-muted">
+          <div class="spinner"></div>
+          <span>Renaming files…</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── STEP 4: Rename Results ─────────────────────────────────────────── -->
+    <section id="renameResultsSection" class="hidden fade-in space-y-4">
+      <div class="bg-green-950 border border-success rounded-2xl p-5 flex items-start gap-4">
+        <div class="w-9 h-9 rounded-full bg-success/20 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5 text-success" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+          </svg>
+        </div>
+        <div>
+          <p class="text-sm font-semibold text-white">Rename Complete</p>
+          <p id="renameSummary" class="text-xs text-green-300 mt-0.5"></p>
+        </div>
+        <button onclick="handleReset()" class="ml-auto text-xs text-muted hover:text-white transition underline underline-offset-2 shrink-0">Start Over</button>
+      </div>
+      <div id="renameResultsList" class="bg-card border border-border rounded-2xl divide-y divide-border overflow-hidden"></div>
+    </section>
+
+  </main>
+
+  <!-- ─── FOOTER ──────────────────────────────────────────────────────────── -->
+  <footer class="border-t border-border px-6 py-4 text-center text-xs text-muted">
+    Open-source · Files never leave your machine · Backend runs on <code class="font-mono text-gray-400">localhost:8000</code>
+  </footer>
+
+  <!-- ─── JAVASCRIPT ───────────────────────────────────────────────────────── -->
+  <script>
+    const API = 'http://localhost:8000';
+
+    let state = {
+      resolvedPath: '',
+      files: [],
+      renameSuggestions: [],
+    };
+
+    const $ = id => document.getElementById(id);
+
+    // ── Error banner ───────────────────────────────────────────────────────
+    function showError(msg) {
+      $('errorMessage').textContent = msg;
+      $('errorBanner').classList.remove('hidden');
+      $('errorBanner').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    function hideError() { $('errorBanner').classList.add('hidden'); }
+
+    // ── Server status ──────────────────────────────────────────────────────
+    async function checkServer() {
+      try {
+        const res = await fetch(`${API}/health`, { signal: AbortSignal.timeout(2500) });
+        if (res.ok) {
+          $('serverStatus').innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-success"></span> Server Online`;
+          $('serverStatus').className = 'inline-flex items-center gap-1.5 text-xs text-green-400 bg-card border border-border rounded-full px-3 py-1';
+          return;
+        }
+      } catch {}
+      $('serverStatus').innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-danger"></span> Server Offline`;
+      $('serverStatus').className = 'inline-flex items-center gap-1.5 text-xs text-red-400 bg-card border border-border rounded-full px-3 py-1';
+    }
+    checkServer();
+    setInterval(checkServer, 8000);
+
+    // ── Step 1: Scan ───────────────────────────────────────────────────────
+    async function handleScan() {
+      hideError();
+      ['previewSection','organizeResultsSection','renamePreviewSection','renameResultsSection'].forEach(id => $(id).classList.add('hidden'));
+
+      const path = $('pathInput').value.trim();
+      if (!path) { showError('Please enter a folder path.'); return; }
+
+      $('scanBtn').disabled = true;
+      $('scanSkeleton').classList.remove('hidden');
+
+      try {
+        const res = await fetch(`${API}/api/scan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path }),
+        });
+        const data = await res.json();
+        if (!res.ok) { showError(data.detail || 'Scan failed.'); return; }
+
+        state.resolvedPath = data.resolved_path;
+        state.files = data.files;
+        renderPreview(data);
+      } catch {
+        showError('Cannot reach the backend. Make sure the server is running on port 8000.');
+      } finally {
+        $('scanBtn').disabled = false;
+        $('scanSkeleton').classList.add('hidden');
+      }
+    }
+
+    function renderPreview(data) {
+      $('fileCount').textContent = `${data.total} file${data.total !== 1 ? 's' : ''} detected`;
+      const list = $('fileList');
+      list.innerHTML = '';
+      data.files.forEach((name, i) => {
+        const el = document.createElement('div');
+        el.className = 'flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-surface transition text-sm';
+        el.innerHTML = `
+          <span class="text-muted text-xs font-mono w-6 text-right shrink-0">${i + 1}</span>
+          <span class="text-lg">${fileEmoji(name)}</span>
+          <span class="font-mono text-gray-200 truncate text-xs">${escapeHtml(name)}</span>
+        `;
+        list.appendChild(el);
+      });
+      $('organizeLabel').textContent = 'Organize with AI — sort into folders';
+      $('renameLabel').textContent = 'Smart Rename with AI — read content, rename files';
+      $('organizeBtn').disabled = false;
+      $('renameBtn').disabled = false;
+      $('organizeLoading').classList.add('hidden');
+      $('renameLoading').classList.add('hidden');
+      $('previewSection').classList.remove('hidden');
+      $('previewSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // ── Confirmation modal ─────────────────────────────────────────────────
+    function handleOrganize() {
+      hideError();
+      $('modalPath').textContent = state.resolvedPath || $('pathInput').value.trim();
+      $('modalFileCount').textContent = state.files.length;
+      $('confirmModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      $('confirmModal').classList.add('hidden');
+    }
+
+    // Close modal when clicking the backdrop
+    $('confirmModal').addEventListener('click', e => {
+      if (e.target === $('confirmModal')) closeModal();
+    });
+
+    // ── Step 2a: Organize (called after confirmation) ──────────────────────
+    async function confirmOrganize() {
+      closeModal();
+      $('organizeBtn').disabled = true;
+      $('renameBtn').disabled = true;
+      $('organizeLabel').textContent = 'Analyzing…';
+      $('organizeLoading').classList.remove('hidden');
+      $('organizeResultsSection').classList.add('hidden');
+
+      try {
+        const res = await fetch(`${API}/api/organize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: $('pathInput').value.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showError(data.detail || 'Organization failed.');
+          resetOrganizeBtn();
+          return;
+        }
+        renderOrganizeResults(data);
+      } catch {
+        showError('Request failed. Check that the server is running and GEMINI_API_KEY is set.');
+        resetOrganizeBtn();
+      } finally {
+        $('organizeLoading').classList.add('hidden');
+      }
+    }
+
+    function resetOrganizeBtn() {
+      $('organizeBtn').disabled = false;
+      $('renameBtn').disabled = false;
+      $('organizeLabel').textContent = 'Organize with AI — sort into folders';
+    }
+
+    function renderOrganizeResults(data) {
+      const total = data.total_moved, cats = data.results.length;
+      $('organizeSummary').textContent =
+        `Moved ${total} file${total !== 1 ? 's' : ''} into ${cats} folder${cats !== 1 ? 's' : ''} inside ${data.resolved_path}`;
+
+      const colors = [
+        'border-purple-600/40 bg-purple-950/30','border-blue-600/40 bg-blue-950/30',
+        'border-cyan-600/40 bg-cyan-950/30','border-emerald-600/40 bg-emerald-950/30',
+        'border-amber-600/40 bg-amber-950/30','border-rose-600/40 bg-rose-950/30',
+        'border-indigo-600/40 bg-indigo-950/30','border-teal-600/40 bg-teal-950/30',
+      ];
+      const container = $('categoriesList');
+      container.innerHTML = '';
+      data.results.forEach((cat, idx) => {
+        const card = document.createElement('div');
+        card.className = `border rounded-xl p-4 fade-in ${colors[idx % colors.length]}`;
+        card.style.animationDelay = `${idx * 60}ms`;
+        card.innerHTML = `
+          <div class="flex items-start justify-between gap-3 mb-3">
+            <div>
+              <p class="text-sm font-semibold text-white">${escapeHtml(cat.category)}</p>
+              <p class="text-xs text-muted mt-0.5 font-mono">→ ${escapeHtml(cat.folder)}/</p>
+            </div>
+            <span class="text-xs shrink-0 bg-black/30 rounded-full px-2.5 py-0.5 text-gray-400">
+              ${cat.files.length} file${cat.files.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <div class="space-y-0.5 border-t border-white/5 pt-2.5">
+            ${cat.files.map(f => `
+              <div class="flex items-center gap-2 text-xs text-gray-300 py-0.5">
+                <span>${fileEmoji(f)}</span>
+                <span class="font-mono truncate">${escapeHtml(f)}</span>
+              </div>`).join('')}
+          </div>`;
+        container.appendChild(card);
+      });
+      $('organizeResultsSection').classList.remove('hidden');
+      $('organizeResultsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ── Step 2b: Smart Rename — fetch preview ─────────────────────────────
+    async function handleRename() {
+      hideError();
+      $('organizeBtn').disabled = true;
+      $('renameBtn').disabled = true;
+      $('renameLabel').textContent = 'Reading contents…';
+      $('renameLoading').classList.remove('hidden');
+      $('renameLoadingLabel').textContent = 'Reading file contents and asking Gemini to suggest names…';
+      $('renamePreviewSection').classList.add('hidden');
+      $('renameResultsSection').classList.add('hidden');
+
+      try {
+        const res = await fetch(`${API}/api/rename-preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: $('pathInput').value.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showError(data.detail || 'Rename preview failed.');
+          $('organizeBtn').disabled = false;
+          $('renameBtn').disabled = false;
+          $('renameLabel').textContent = 'Smart Rename with AI — read content, rename files';
+          return;
+        }
+        state.renameSuggestions = data.suggestions;
+        renderRenamePreview(data.suggestions);
+      } catch {
+        showError('Request failed. Check that the server is running and GEMINI_API_KEY is set.');
+        $('organizeBtn').disabled = false;
+        $('renameBtn').disabled = false;
+        $('renameLabel').textContent = 'Smart Rename with AI — read content, rename files';
+      } finally {
+        $('renameLoading').classList.add('hidden');
+      }
+    }
+
+    function renderRenamePreview(suggestions) {
+      const table = $('renameTable');
+      table.innerHTML = '';
+
+      suggestions.forEach((s, idx) => {
+        const row = document.createElement('div');
+        row.className = 'grid grid-cols-[20px_1fr_20px_1fr] gap-x-3 items-center py-2 px-1 rounded-lg hover:bg-surface/50 transition';
+        row.dataset.idx = idx;
+
+        const unchanged = s.original === s.suggested;
+        row.innerHTML = `
+          <input
+            type="checkbox"
+            id="chk_${idx}"
+            ${unchanged ? '' : 'checked'}
+            onchange="updateSelectedCount()"
+          />
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="text-base shrink-0">${fileEmoji(s.original)}</span>
+            <span class="font-mono text-xs text-gray-400 truncate" title="${escapeHtml(s.original)}">${escapeHtml(s.original)}</span>
+          </div>
+          <span class="text-accent text-xs font-bold text-center">→</span>
+          <div class="space-y-1">
+            <input
+              type="text"
+              id="inp_${idx}"
+              class="rename-input ${unchanged ? '' : 'changed'}"
+              value="${escapeHtml(s.suggested)}"
+              data-original="${escapeHtml(s.suggested)}"
+              oninput="onRenameInputChange(this)"
+              title="${escapeHtml(s.reason)}"
+            />
+            <p class="text-xs text-muted truncate px-1" title="${escapeHtml(s.reason)}">${escapeHtml(s.reason)}</p>
+          </div>
+        `;
+        table.appendChild(row);
+      });
+
+      updateSelectedCount();
+      $('renamePreviewSection').classList.remove('hidden');
+      $('renamePreviewSection').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      $('organizeBtn').disabled = false;
+      $('renameBtn').disabled = false;
+      $('renameLabel').textContent = 'Smart Rename with AI — read content, rename files';
+    }
+
+    function onRenameInputChange(input) {
+      const isChanged = input.value !== input.dataset.original;
+      input.classList.toggle('changed', isChanged || input.value !== input.dataset.originalFile);
+      updateSelectedCount();
+    }
+
+    function toggleAll(checked) {
+      state.renameSuggestions.forEach((_, idx) => {
+        const chk = $(`chk_${idx}`);
+        if (chk) chk.checked = checked;
+      });
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+      const total = state.renameSuggestions.length;
+      let selected = 0;
+      for (let i = 0; i < total; i++) {
+        const chk = $(`chk_${i}`);
+        if (chk && chk.checked) selected++;
+      }
+      $('selectedCount').textContent = `${selected} of ${total} selected`;
+      $('applyRenameBtn').disabled = selected === 0;
+    }
+
+    // ── Step 3b: Apply renames ─────────────────────────────────────────────
+    async function handleApplyRenames() {
+      hideError();
+      const renames = [];
+      state.renameSuggestions.forEach((s, idx) => {
+        const chk = $(`chk_${idx}`);
+        const inp = $(`inp_${idx}`);
+        if (chk && chk.checked && inp) {
+          const newName = inp.value.trim();
+          if (newName && newName !== s.original) {
+            renames.push({ original: s.original, new_name: newName });
+          }
+        }
+      });
+
+      if (renames.length === 0) {
+        showError('No files selected for renaming, or none have a different name from the original.');
+        return;
+      }
+
+      $('applyRenameBtn').disabled = true;
+      $('applyRenameLabel').textContent = 'Renaming…';
+      $('applyRenameLoading').classList.remove('hidden');
+
+      try {
+        const res = await fetch(`${API}/api/rename-apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: $('pathInput').value.trim(), renames }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showError(data.detail || 'Rename failed.');
+          $('applyRenameBtn').disabled = false;
+          $('applyRenameLabel').textContent = 'Apply Selected Renames';
+          return;
+        }
+        renderRenameResults(data);
+      } catch {
+        showError('Request failed. Check that the server is running.');
+        $('applyRenameBtn').disabled = false;
+        $('applyRenameLabel').textContent = 'Apply Selected Renames';
+      } finally {
+        $('applyRenameLoading').classList.add('hidden');
+      }
+    }
+
+    function renderRenameResults(data) {
+      $('renameSummary').textContent =
+        `Successfully renamed ${data.renamed} file${data.renamed !== 1 ? 's' : ''} in ${data.resolved_path}`;
+
+      const list = $('renameResultsList');
+      list.innerHTML = '';
+      data.results.forEach(r => {
+        const row = document.createElement('div');
+        const ok = r.status === 'renamed';
+        row.className = 'flex items-center gap-3 px-4 py-3 text-xs';
+        row.innerHTML = `
+          <span class="text-base shrink-0">${ok ? '✅' : '⚠️'}</span>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-mono text-gray-400 truncate">${escapeHtml(r.original)}</span>
+              ${ok ? `<span class="text-accent shrink-0">→</span>
+              <span class="font-mono text-gray-100 truncate">${escapeHtml(r.new_name)}</span>` : ''}
+            </div>
+            ${!ok ? `<p class="text-red-400 mt-0.5">${escapeHtml(r.status)}</p>` : ''}
+          </div>
+        `;
+        list.appendChild(row);
+      });
+
+      $('renamePreviewSection').classList.add('hidden');
+      $('renameResultsSection').classList.remove('hidden');
+      $('renameResultsSection').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ── Reset ──────────────────────────────────────────────────────────────
+    function handleReset() {
+      $('pathInput').value = '';
+      ['previewSection','organizeResultsSection','renamePreviewSection','renameResultsSection'].forEach(id => $(id).classList.add('hidden'));
+      hideError();
+      state = { resolvedPath: '', files: [], renameSuggestions: [] };
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    $('pathInput').addEventListener('keydown', e => { if (e.key === 'Enter') handleScan(); });
+
+    // ── Utilities ──────────────────────────────────────────────────────────
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function fileEmoji(name) {
+      const ext = (name.split('.').pop() || '').toLowerCase();
+      const map = {
+        pdf:'📄', doc:'📝', docx:'📝', txt:'📃', md:'📋', rtf:'📋',
+        xls:'📊', xlsx:'📊', csv:'📊', numbers:'📊',
+        ppt:'📑', pptx:'📑', key:'📑',
+        jpg:'🖼️', jpeg:'🖼️', png:'🖼️', gif:'🖼️', webp:'🖼️', svg:'🖼️', heic:'🖼️', bmp:'🖼️',
+        mp4:'🎬', mov:'🎬', avi:'🎬', mkv:'🎬', wmv:'🎬', m4v:'🎬',
+        mp3:'🎵', wav:'🎵', aac:'🎵', flac:'🎵', m4a:'🎵', ogg:'🎵',
+        zip:'🗜️', tar:'🗜️', gz:'🗜️', rar:'🗜️', '7z':'🗜️',
+        js:'⚙️', ts:'⚙️', py:'🐍', rb:'💎', go:'🐹', java:'☕', swift:'🦅', kt:'⚙️',
+        html:'🌐', css:'🎨', json:'📐', yaml:'📐', yml:'📐', toml:'📐', xml:'📐',
+        sh:'🖥️', bash:'🖥️', zsh:'🖥️',
+        dmg:'💿', pkg:'📦',
+        sketch:'🎨', fig:'🎨',
+        ttf:'🔤', otf:'🔤', woff:'🔤',
+      };
+      return map[ext] || '📁';
+    }
+  </script>
+</body>
+</html>
